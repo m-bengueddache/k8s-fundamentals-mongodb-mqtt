@@ -18,8 +18,24 @@
 
 MongoDB + Mongo Express is deployed with configuration and credentials injected as environment variables (`ConfigMap` for the connection URL, `Secret` for credentials) — the natural fit for an application that reads `process.env`. A Mosquitto MQTT broker is deployed with its configuration file and SSL certificate mounted as actual files inside the container via `volumes` + `volumeMounts` and `subPath` — the natural fit for a service that expects a config file path, not environment variables.
 
+## The Kubernetes object model, from first principles
+
+Before either service, the basics: pods are the smallest deployable unit, but they're never created or managed directly. A **Deployment** is the blueprint — name, image, replica count — and Kubernetes manages a **ReplicaSet** automatically underneath it to keep the requested number of pods running.
+
+```
+Deployment            (what you configure: image, replicas, updates)
+  └── ReplicaSet       (managed automatically by Kubernetes)
+        └── Pod        (abstraction around one or more containers)
+              └── Container
+```
+
+This shows up directly in resource naming: `kubectl get deployment` shows `nginx-deployment`; `kubectl get replicaset` shows `nginx-deployment-6ff797d4c9`; `kubectl get pod` shows `nginx-deployment-6ff797d4c9-ln8lz` — each layer's name is derived from the one above it. Editing a Deployment (e.g. `kubectl edit deployment nginx-deployment` to change the image) doesn't patch the running pod in place: Kubernetes creates a *new* ReplicaSet, scales it up, and scales the old one to zero — visible directly with `kubectl get replicaset` showing the old ReplicaSet at 0 pods and a new one at the requested count.
+
+`kubectl apply -f file.yaml` is idempotent by design: the first run reports `created`, every subsequent run (after editing the file) reports `configured` — Kubernetes diffs the manifest against the live object rather than blindly recreating it.
+
 ## Skills demonstrated
 
+- Understanding what `kubectl apply` and a Deployment edit actually do underneath (ReplicaSet replacement, not in-place pod mutation) rather than treating `kubectl` commands as opaque
 - Choosing between env-var and file-mount configuration patterns based on what the workload actually consumes, not defaulting to one pattern everywhere
 - Using `subPath` to mount a single file from a ConfigMap/Secret without overwriting the entire target directory — a common trap for anyone mounting config into a directory that also needs other files
 - Correctly exposing a service both internally (`ClusterIP`) and to the host (`NodePort`) depending on which is needed
