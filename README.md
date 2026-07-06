@@ -33,12 +33,46 @@ This shows up directly in resource naming: `kubectl get deployment` shows `nginx
 
 `kubectl apply -f file.yaml` is idempotent by design: the first run reports `created`, every subsequent run (after editing the file) reports `configured` — Kubernetes diffs the manifest against the live object rather than blindly recreating it.
 
+## Exposing a service via Ingress (NGINX + Helm)
+
+Every service above reaches the outside world through `NodePort`, which works but means one port per service and no hostname-based routing. On this same cluster, the Kubernetes Dashboard was instead exposed through an **Ingress**, installed and wired up as follows:
+
+1. **Install the NGINX Ingress Controller via Helm** — an Ingress resource is just a routing rule; it does nothing without a controller running in the cluster to read it:
+   ```bash
+   helm install nginx-ingress oci://ghcr.io/nginx/charts/nginx-ingress
+   ```
+2. **Define the routing rule**, in the same namespace as the target Service:
+   ```yaml
+   apiVersion: networking.k8s.io/v1
+   kind: Ingress
+   metadata:
+     name: dashboard-ingress
+     namespace: kubernetes-dashboard
+   spec:
+     ingressClassName: nginx
+     rules:
+     - host: dashboard.com
+       http:
+         paths:
+           - path: /
+             pathType: Prefix
+             backend:
+               service:
+                 name: kubernetes-dashboard
+                 port:
+                   number: 80
+   ```
+3. **Map the hostname locally** (`127.0.0.1 dashboard.com` in `/etc/hosts`) and run `minikube tunnel` — Minikube has no real cloud load balancer, so the tunnel is what makes the Ingress Controller's address reachable from the browser at all.
+
+The **default backend** is what the Ingress Controller falls back to for any request that matches no rule (wrong host, unmatched path) — a generic `404` by default, visible via `kubectl describe ingress`.
+
 ## Skills demonstrated
 
 - Understanding what `kubectl apply` and a Deployment edit actually do underneath (ReplicaSet replacement, not in-place pod mutation) rather than treating `kubectl` commands as opaque
 - Choosing between env-var and file-mount configuration patterns based on what the workload actually consumes, not defaulting to one pattern everywhere
 - Using `subPath` to mount a single file from a ConfigMap/Secret without overwriting the entire target directory — a common trap for anyone mounting config into a directory that also needs other files
 - Correctly exposing a service both internally (`ClusterIP`) and to the host (`NodePort`) depending on which is needed
+- Installing an Ingress Controller via Helm and understanding that an Ingress resource without a controller reading it does nothing
 
 ## Key technical decisions
 
@@ -50,8 +84,8 @@ This shows up directly in resource naming: `kubectl get deployment` shows `nginx
 
 ## Limitations
 
-- Local Minikube only — no cloud LoadBalancer or Ingress in this project (see `helm-lke-mongodb` / `k8s-microservices-helm` for cloud-exposed variants).
-- No TLS validation performed on the Mosquitto broker beyond mounting the certificate file.
+- Local Minikube only — Ingress here relies on `minikube tunnel`, not a real cloud load balancer (see `helm-lke-mongodb` / `k8s-microservices-helm` for cloud-exposed variants).
+- No TLS configured on the Ingress or the Mosquitto broker beyond mounting the certificate file.
 
 ## Roadmap
 
